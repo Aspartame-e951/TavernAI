@@ -18,15 +18,13 @@ const path = require('path');
 
 const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
-const ipaddr = require('ipaddr.js');
 
-const config = require(path.join(process.cwd(), './config.conf'));
+
+const config = require('./config.conf');
 const server_port = config.port;
 const whitelist = config.whitelist;
 const whitelistMode = config.whitelistMode;
 const autorun = config.autorun;
-
-
 
 var Client = require('node-rest-client').Client;
 var client = new Client();
@@ -35,6 +33,7 @@ var api_server = "";//"http://127.0.0.1:5000";
 //var server_port = 8000;
 
 var api_novelai = "https://api.novelai.net";
+var api_horde = "https://stablehorde.net/api";
 
 var response_get_story;
 var response_generate;
@@ -98,18 +97,7 @@ const CORS = cors({
 app.use(CORS);
 
 app.use(function (req, res, next) { //Security
-    let clientIp = req.connection.remoteAddress;
-    let ip = ipaddr.parse(clientIp);
-    // Check if the IP address is IPv4-mapped IPv6 address
-    if (ip.kind() === 'ipv6' && ip.isIPv4MappedAddress()) {
-      const ipv4 = ip.toIPv4Address().toString();
-      clientIp = ipv4;
-    } else {
-      clientIp = ip;
-      clientIp = clientIp.toString();
-    }
-    
-     //clientIp = req.connection.remoteAddress.split(':').pop();
+    const clientIp = req.connection.remoteAddress.split(':').pop();
     if (whitelistMode === true && !whitelist.includes(clientIp)) {
         console.log('Forbidden: Connection attempt from '+ clientIp+'. If you are attempting to connect, please add your IP address in whitelist or disable whitelist mode in config.conf in root of TavernAI folder.\n');
         return res.status(403).send('<b>Forbidden</b>: Connection attempt from <b>'+ clientIp+'</b>. If you are attempting to connect, please add your IP address in whitelist or disable whitelist mode in config.conf in root of TavernAI folder.');
@@ -120,7 +108,7 @@ app.use(function (req, res, next) { //Security
 app.use((req, res, next) => {
   if (req.url.startsWith('/characters/') && is_colab && process.env.googledrive == 2) {
       
-    const filePath = path.join(charactersPath, decodeURIComponent(req.url.substr('/characters'.length)));
+    const filePath = path.join(charactersPath, req.url.substr('/characters'.length));
     fs.access(filePath, fs.constants.R_OK, (err) => {
       if (!err) {
         res.sendFile(filePath);
@@ -139,7 +127,7 @@ app.use(express.static(__dirname + "/public", { refresh: true }));
 
 
 app.use('/backgrounds', (req, res) => {
-  const filePath = decodeURIComponent(path.join(process.cwd(), 'public/backgrounds', req.url.replace(/%20/g, ' ')));
+  const filePath = path.join(process.cwd(), 'public/backgrounds', req.url);
   fs.readFile(filePath, (err, data) => {
     if (err) {
       res.status(404).send('File not found');
@@ -150,7 +138,7 @@ app.use('/backgrounds', (req, res) => {
   });
 });
 app.use('/characters', (req, res) => {
-  const filePath = decodeURIComponent(path.join(process.cwd(), charactersPath, req.url.replace(/%20/g, ' ')));
+  const filePath = path.join(process.cwd(), charactersPath, req.url);
   fs.readFile(filePath, (err, data) => {
     if (err) {
       res.status(404).send('File not found');
@@ -881,6 +869,118 @@ app.post("/generate_novelai", jsonParser, function(request, response_generate_no
         //console.log('');
 	//console.log('something went wrong on the request', err.request.options);
         response_getstatus.send({error: true});
+    });
+});
+
+//***********Horde API 
+app.post("/generate_horde", jsonParser, function(request, response_generate_horde = response){
+	// Throw validation error if nothing sent/fails?
+    if(!request.body) return response_generate_horde.sendStatus(400);
+    //console.log(request.body.prompt); // debug
+
+	// Prompt variable
+    request_prompt = request.body.prompt;
+                        
+	var this_settings = {
+	"prompt": request_prompt,
+	"params": {
+		"n": request.body.n,
+		"frmtadsnsp": request.body.frmtadsnsp,
+		"frmtrmblln": request.body.frmtrmblln,
+		"frmtrmspch": request.body.frmtrmspch,
+		"frmttriminc": request.body.frmttriminc,
+		"max_context_length": request.body.max_context_length,
+		"max_length": request.body.max_length,
+		"rep_pen": request.body.rep_pen,
+		"rep_pen_range": request.body.rep_pen_range,
+		"rep_pen_slope": request.body.rep_pen_slope,
+		"singleline": request.body.singleline,
+		"temperature": request.body.temperature,
+		"tfs": request.body.tfs,
+		"top_a": request.body.top_a,
+		"top_k": request.body.top_k,
+		"top_p": request.body.top_p,
+		"typical": request.body.typical,
+		"sampler_order":  [request.body.s1,request.body.s2,request.body.s3,request.body.s4,request.body.s5,request.body.s6,request.body.s7]
+	},
+	"models": request.body.models
+	};
+
+    var args = {
+        data: this_settings,
+        headers: {"Content-Type": "application/json", "apikey": request.body.horde_api_key}
+    };
+	
+	console.log(this_settings);
+	
+    client.post(api_horde+"/v2/generate/text/async", args, function (data, response) {
+		//console.log(data);
+		//console.log(response);
+		
+		// I have you now.
+        if(response.statusCode == 202){
+			console.log(data)
+			
+			// 終わりだ。
+			var waiting = setInterval(function(){
+				client.get(api_horde+"/v2/generate/text/status/"+data.id, args, function (gen, response) {
+
+					hordeWaitProgress(gen);
+					
+					if (gen.done && gen.generations != undefined){
+						console.log({ Kudos: gen.kudos })
+						console.log(gen.generations)
+						response_generate_horde.send(gen);
+						clearInterval(waiting);
+					}
+				});
+			}, 5000);
+        }
+		
+        if(response.statusCode == 401){
+            console.log('Validation error');
+            response_generate_horde.send({error: true});
+        }
+        if(response.statusCode == 429 || response.statusCode == 503 || response.statusCode == 507){
+            console.log(data);
+            response_generate_horde.send({error: true});
+        }
+    }).on('error', function (err) {
+        console.log(err);
+	//console.log('something went wrong on the request', err.request.options);
+        response_generate.send({error: true});
+    });
+});
+
+function hordeWaitProgress(data){
+	try {
+		process.stdout.clearLine();
+		process.stdout.cursorTo(0);
+		var progress = "";
+		if (data.queue_position > 0) {
+			process.stdout.write("Queue position: " + data.queue_position);
+		} else if (data.wait_time > 0) {
+			process.stdout.write("Wait time: " + data.wait_time);
+		}
+	} catch (error) {
+		return;
+	}
+}
+
+app.post("/getstatus_horde", jsonParser, function(request, response_getstatus_horde = response){
+    if(!request.body) return response_getstatus_horde.sendStatus(400);
+    horde_api_key = request.body.horde_api_key;
+    var args = { "type": "text" };
+    client.get(api_horde+"/v2/status/models?type=text",args, function (data, response) {
+        if(response.statusCode == 200){
+            console.log({ Models: 'List fetched and updated.' });
+            response_getstatus_horde.send(data);//data);
+        } else {
+            console.log(data);
+            response_getstatus_horde.send({error: true});
+        }
+    }).on('error', function (err) {
+        response_getstatus_horde.send({error: true});
     });
 });
 

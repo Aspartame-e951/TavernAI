@@ -7,7 +7,6 @@
     <script src="scripts/showdown.min.js"></script>
     <link rel="stylesheet" type="text/css" href="style.css">
     <link rel="stylesheet" href="css/bg_load.css">
-    <link rel="icon" type="image/x-icon" href="favicon.ico">
 
     <script type=module>
         //To DO:: 
@@ -131,7 +130,14 @@
             var novelai_settings;
             var novelai_setting_names;
             var preset_settings_novel = 'Classic-Krake';
-            
+			
+			//Tweaks
+			var keep_example_dialogue = false;
+			
+			// HORDE
+            var horde_api_key = "0000000000";
+			var horde_model = "";
+			
             //css
             var bg1_toggle = true;
             var css_mes_bg = $('<div class="mes"></div>').css('background');
@@ -190,6 +196,8 @@
                     $("#online_status_text2").html("No connection...");
                     $("#online_status_indicator3").css("background-color", "red");
                     $("#online_status_text3").html("No connection...");
+					$("#online_status_indicator_horde").css("background-color", "red");
+                    $("#online_status_text_horde").html("No connection...");
                     is_get_status = false;
                     is_get_status_novel = false;
                 }else{
@@ -200,6 +208,8 @@
                     $("#online_status_text2").html(online_status);
                     $("#online_status_indicator3").css("background-color", "green");
                     $("#online_status_text3").html(online_status);
+					$("#online_status_indicator_horde").css("background-color", "green");
+                    $("#online_status_text_horde").html(online_status);
                 }
                 
             }
@@ -295,6 +305,57 @@
                 checkOnlineStatus();
                 $("#api_loading").css("display", 'none');
                 $("#api_button").css("display", 'inline-block');
+            }
+			
+			// HORDE
+			async function getStatusHorde(){
+                if(is_get_status){
+                    var data = {'type':'text'};
+
+                    jQuery.ajax({    
+                        type: 'POST', // 
+                        url: '/getstatus_horde', // 
+                        data: JSON.stringify(data),
+                        beforeSend: function(){
+                            //$('#create_button').attr('value','Creating...'); 
+                        },
+                        cache: false,
+                        dataType: "json",
+                        contentType: "application/json",
+                        success: function(data){
+                            if (!('error' in data)) online_status = 'Models list fetched and updated';
+							
+							$('#horde_model_select').empty();
+							$('#horde_model_select').append($('<option></option>').val('').html('-- Select Model --'));
+							$.each(data, function(i, p) {
+								$('#horde_model_select').append($('<option></option>').val(p.name).html('['+p.count.toString()+'] - '+p.name));
+							});
+							
+							is_pygmalion = true;
+                            resultCheckStatusHorde();
+                        },
+                        error: function (jqXHR, exception) {
+                            online_status = 'no_connection';
+							$('#horde_model_select').empty();
+							$('#horde_model_select').append($('<option></option>').val('').html('-- Connect to Horde for models --'));
+							
+                            console.log(exception);
+                            console.log(jqXHR);
+                            resultCheckStatusHorde();
+                        }
+                    });
+                }else{
+                    if(!is_get_status && !is_get_status_novel){
+                        online_status = 'no_connection';
+                    }
+                }
+            }
+            
+            function resultCheckStatusHorde(){
+                is_api_button_press = false;  
+                checkOnlineStatus();
+                $("#api_loading_horde").css("display", 'none');
+                $("#api_button_horde").css("display", 'inline-block');
             }
             
             function printCharaters(){
@@ -394,7 +455,6 @@
                         $('#colab_shadow_popup').css('display', 'none');
                         is_colab = true;
                         let url = String(getData.colaburl).split("flare.com")[0] + "flare.com";
-                        url = String(url).split("loca.lt")[0] + "loca.lt";
                         $('#api_url_text').val(url);
                         setTimeout(function() {
                             $('#api_button').click();
@@ -579,6 +639,9 @@
                 }
             });
             async function Generate(type) {//encode("dsfs").length
+				// HORDE
+				if (main_api == 'horde' && horde_model == '') return;
+				
                 tokens_already_generated = 0;
                 message_already_generated = name2+': ';
                 if(online_status != 'no_connection' && this_chid != undefined){
@@ -754,6 +817,7 @@
                     //chat2 = chat2.reverse();
                     var this_max_context = 1487;
                     if(main_api == 'kobold') this_max_context = max_context;
+					if(main_api == 'horde') this_max_context = max_context;
                     if(main_api == 'novel'){
                         if(novel_tier === 1){
                             this_max_context = 1024;
@@ -785,8 +849,9 @@
                             let mesExmString = '';
                             for(let iii = 0; iii < mesExamplesArray.length; iii++){//mesExamplesArray It need to make from end to start
                                 
+								//Tweaks - Always add examples if on.
                                 mesExmString = mesExmString+mesExamplesArray[iii];
-                                if(encode(JSON.stringify(storyString+mesExmString+chatString+anchorTop+anchorBottom+charPersonality)).length+120 < this_max_context){ //example of dialogs
+                                if(encode(JSON.stringify(storyString+mesExmString+chatString+anchorTop+anchorBottom+charPersonality)).length+120 < this_max_context || keep_example_dialogue){ //example of dialogs
                                     if(!is_pygmalion){
                                         mesExamplesArray[iii] = mesExamplesArray[iii].replace(/<START>/i, 'This is how '+name2+' should talk');//An example of how '+name2+' responds
                                     }
@@ -887,8 +952,10 @@
                         function checkPromtSize(){
                             setPromtString();
                             let thisPromtContextSize = encode(JSON.stringify(storyString+mesExmString+mesSendString+anchorTop+anchorBottom+charPersonality+generatedPromtCache)).length+120;
+							console.log("Tokens: " + thisPromtContextSize.toString());
                             if(thisPromtContextSize > this_max_context){
-                                if(count_exm_add > 0){
+								//tweak - if keep_example_dialogue is true, do not remove them
+                                if(count_exm_add > 0 && !keep_example_dialogue){
                                     //mesExamplesArray.length = mesExamplesArray.length-1;
                                     count_exm_add--;
                                     checkPromtSize();
@@ -986,6 +1053,49 @@
                                             "order": this_settings.order
                                                 };
                         }
+						
+						// HORDE
+						if(main_api == 'horde'){
+							// Same settings as Kobold?
+                            var this_settings = koboldai_settings[koboldai_setting_names[preset_settings]];
+							this_amount_gen = parseInt(amount_gen);
+							
+							if (horde_api_key == null) {
+								horde_api_key = "0000000000";
+							}
+							
+							// Pray it works
+							generate_data = {
+								"prompt": finalPromt,
+								"horde_api_key": horde_api_key,
+								"n": 1,
+								"frmtadsnsp": false,
+								"frmtrmblln": false,
+								"frmtrmspch": false,
+								"frmttriminc": false,
+								"max_context_length": parseInt(max_context),
+								"max_length": this_amount_gen,
+								"rep_pen": parseFloat(rep_pen),
+								"rep_pen_range": parseInt(rep_pen_size),
+								"rep_pen_slope": this_settings.rep_pen_slope,
+								"singleline": false,
+								"temperature": parseFloat(temp),
+								"tfs": this_settings.tfs,
+								"top_a": this_settings.top_a,
+								"top_k": this_settings.top_k,
+								"top_p": this_settings.top_p,
+								"typical": this_settings.typical,
+								"s1": this_settings.sampler_order[0],
+								"s2": this_settings.sampler_order[1],
+								"s3": this_settings.sampler_order[2],
+								"s4": this_settings.sampler_order[3],
+								"s5": this_settings.sampler_order[4],
+								"s6": this_settings.sampler_order[5],
+								"s7": this_settings.sampler_order[6],
+								"models": [horde_model]
+							};
+                        }
+						
                         var generate_url = '';
                         if(main_api == 'kobold'){
                             generate_url = '/generate';
@@ -993,6 +1103,11 @@
                         if(main_api == 'novel'){
                             generate_url = '/generate_novelai';
                         }
+						// HORDE
+						if(main_api == 'horde'){
+                            generate_url = '/generate_horde';
+                        }
+						
                         jQuery.ajax({    
                             type: 'POST', // 
                             url: generate_url, // 
@@ -1016,12 +1131,15 @@
                                     if(main_api == 'novel'){
                                         var getMessage = data.output;
                                     }
+									if(main_api == 'horde'){
+                                        var getMessage = data.generations[0].text;
+                                    }
 
                                     //Pygmalion run again
                                     if(is_pygmalion){
                                         if_typing_text = false;
                                         message_already_generated +=getMessage;
-                                        if(message_already_generated.indexOf('You:') === -1 && message_already_generated.indexOf('<|endoftext|>') === -1 && tokens_already_generated < parseInt(amount_gen) && getMessage.length > 0){
+                                        if(message_already_generated.indexOf('You:') === -1 && tokens_already_generated < parseInt(amount_gen) && getMessage.length > 0){
                                             runGenerate(getMessage);
                                             return;
                                         }
@@ -1037,10 +1155,6 @@
                                     }
                                     if(getMessage.indexOf(name1+":") != -1){ 
                                         getMessage = getMessage.substr(0,getMessage.indexOf(name1+":"));
-
-                                    }
-                                    if(getMessage.indexOf('<|endoftext|>') != -1){ 
-                                        getMessage = getMessage.substr(0,getMessage.indexOf('<|endoftext|>'));
 
                                     }
                                     let this_mes_is_name = true;
@@ -1857,6 +1971,20 @@
                     getStatus();
                 }
             });
+			
+			// HORDE
+			 $( "#api_button_horde" ).click(function() {
+				if($('#horde_api_key').val() != ''){
+					horde_api_key == "0000000000";
+				}
+				$("#api_loading_horde").css("display", 'inline-block');
+				$("#api_button_horde").css("display", 'none');
+				api_server = $('#horde_api_key').val();
+				//console.log("2: "+api_server);
+				is_get_status = true;
+				is_api_button_press = true;
+				getStatusHorde();
+            });
             
             $( "body" ).click(function() {
                 if($("#options").css('opacity') == 1.0){
@@ -2023,21 +2151,43 @@
                 checkOnlineStatus();
                 changeMainAPI();
                 saveSettings();
+				
+				// HORDE
+				horde_model = "";
+				$('#horde_model_select').empty();
+				$('#horde_model_select').append($('<option></option>').val('').html('-- Connect to Horde for models --'));
             });
             function changeMainAPI(){
                 if($('#main_api').find(":selected").val() == 'kobold'){
                     $('#kobold_api').css("display", "block");
                     $('#novel_api').css("display", "none");
+					$('#horde_api').css("display", "none");
                     main_api = 'kobold';
                     $('#max_context_block').css('display', 'block');
                     $('#amount_gen_block').css('display', 'block');
+					$('#range_block').css('display', 'block');
+					$('#preset_block').css('display', 'block');
                 }
                 if($('#main_api').find(":selected").val() == 'novel'){
                     $('#kobold_api').css("display", "none");
                     $('#novel_api').css("display", "block");
+					$('#horde_api').css("display", "none");
                     main_api = 'novel';
                     $('#max_context_block').css('display', 'none');
                     $('#amount_gen_block').css('display', 'none');
+					$('#range_block').css('display', 'none');
+					$('#preset_block').css('display', 'none');
+                }
+				// HORDE
+				if($('#main_api').find(":selected").val() == 'horde'){
+                    $('#kobold_api').css("display", "none");
+                    $('#novel_api').css("display", "none");
+					$('#horde_api').css("display", "block");
+                    main_api = 'horde';
+                    $('#max_context_block').css('display', 'block');
+                    $('#amount_gen_block').css('display', 'block');
+					$('#range_block').css('display', 'block');
+					$('#preset_block').css('display', 'block');
                 }
             }
             async function getUserAvatars(){
@@ -2135,6 +2285,23 @@
                 $('#rep_pen_size_counter_novel').html( $(this).val()+" Tokens");
                 var repPenSizeTimer_novel = setTimeout(saveSettings, 500);
             });
+			
+			
+			//Tweaks
+			$('#keep_example_dialogue').change(function() {
+                keep_example_dialogue = !!$('#keep_example_dialogue').prop('checked');
+                saveSettings();
+            });
+			
+			// HORDE
+			$(document).on('input', '#horde_api_key', function() {
+                horde_api_key = $(this).val();
+            });
+			
+			$( "#horde_model_select" ).change(function() {
+                horde_model = $( "#horde_model_select" ).val();
+			});
+			
             //***************SETTINGS****************//
             ///////////////////////////////////////////
             async function getSettings(type){//timer
@@ -2263,6 +2430,10 @@
                             
                             $('#rep_pen_size_novel').val(rep_pen_size_novel);
                             $('#rep_pen_size_counter_novel').html(rep_pen_size_novel+" Tokens");
+							
+							//Tweaks
+							if(settings.keep_example_dialogue !== undefined) keep_example_dialogue = !!settings.keep_example_dialogue;
+							$('#keep_example_dialogue').prop('checked', keep_example_dialogue);
                             
                             //////////////////////
                             if(preset_settings == 'gui'){
@@ -2335,8 +2506,10 @@
                             model_novel: model_novel,
                             temp_novel: temp_novel,
                             rep_pen_novel: rep_pen_novel,
-                            rep_pen_size_novel: rep_pen_size_novel
+                            rep_pen_size_novel: rep_pen_size_novel,
+							keep_example_dialogue: keep_example_dialogue
                         }),
+					//Tweaks - added "keep_example_dialogue: keep_example_dialogue" above
                     beforeSend: function(){
 
 
@@ -2947,6 +3120,7 @@
             <h3 id="title_api">API</h3>
             <select id="main_api" style="color:#fff;background-color:#13152c;" >
                 <option value="kobold">KoboldAI</option>
+				<option value="horde">Horde</option>
                 <option value="novel">NovelAI</option>
             </select>
             <div id="kobold_api" style="position: relative;">
@@ -2961,21 +3135,46 @@
                 <div id="online_status2">
                     <div id="online_status_indicator2"></div><div id="online_status_text2">No connection...</div>
                 </div>
-                <h4>Preset settings</h4><h5>Selecting settings (<a href="/notes/4" target="_blank">?</a>)</h5>
+            </div>
+			
+			<!-- HORDE -->
+			<div id="horde_api" style="position: relative;">
+                <form  action="javascript:void(null);" method="post" enctype="multipart/form-data">
+				<h4>Horde API Key</h4><h5>Leave blank for guest account.</h5><h5>Register at: <a href="https://horde.koboldai.net/register" target="_blank">https://horde.koboldai.net/register</a></h5>
+                <input type="password" id="horde_api_key" name="horde_api_key" class="text_pole_horde" maxlength="500" size="35" placeholder="0000000000" autocomplete="off">
+				<input id="api_button_horde" type="submit" value="Connect">
+                <img id="api_loading_horde" src="img/load.svg" >
+				<div id="online_status_horde">
+                    <div id="online_status_indicator_horde"></div><div id="online_status_text_horde">No connection...</div>
+                </div>
+				
+				
+				<h4>Models</h4>
+				<select id="horde_model_select" style="color:#fff;background-color:#13152c;" >
+					<option value="" selected>-- Connect to Horde for models --</option>
+				</select>
+				
+                
+                </form>
+            </div>
+			
+			<div id="preset_block">
+				<h4>Preset settings</h4><h5>Selecting settings (<a href="/notes/4" target="_blank">?</a>)</h5>
                 <select id="settings_perset">
                     <option value="gui">GUI KoboldAI Settings</option>
                 </select>
-                <div id="range_block">
-                    <h4>Temperature </h4><h5 id="temp_counter">select</h5>
-                    <input type="range" id="temp" name="volume" min="0.1" max="2.0" step="0.01">
-                    <!--<h4>Amount generation </h4><h5 id="amount_gen_counter">select</h5>
-                    <input type="range" id="amount_gen" name="volume" min="16" max="512" step="1">-->
-                    <h4>Repetition Penalty </h4><h5 id="rep_pen_counter">select</h5>
-                    <input type="range" id="rep_pen" name="volume" min="1" max="1.5" step="0.01">
-                    <h4>Repetition Penalty Range</h4><h5 id="rep_pen_size_counter">select</h5>
-                    <input type="range" id="rep_pen_size" name="volume" min="0" max="2048" step="1">
-                </div>
+			</div>
+			<div id="range_block">
+				<h4>Temperature </h4><h5 id="temp_counter">select</h5>
+				<input type="range" id="temp" name="volume" min="0.1" max="2.0" step="0.01">
+				<!--<h4>Amount generation </h4><h5 id="amount_gen_counter">select</h5>
+				<input type="range" id="amount_gen" name="volume" min="16" max="512" step="1">-->
+				<h4>Repetition Penalty </h4><h5 id="rep_pen_counter">select</h5>
+				<input type="range" id="rep_pen" name="volume" min="1" max="1.5" step="0.01">
+				<h4>Repetition Penalty Range</h4><h5 id="rep_pen_size_counter">select</h5>
+				<input type="range" id="rep_pen_size" name="volume" min="0" max="2048" step="1">
             </div>
+			
             <div id="novel_api" style="display: none;position: relative;">
                 <div style="position: absolute; right:152px; top:-25px; opacity:0.25;"><a href="https://novelai.net/" target="_blank"><img src="img/novelai.png" style="width:auto;height:22px;"></a></div>
                 <form  action="javascript:void(null);" method="post" enctype="multipart/form-data">
@@ -3040,9 +3239,19 @@
                     <label class="checkbox" >
                         <input id="style_anchor" type="checkbox"/><span></span>
                     </label><h4>Style Anchor</h4>
-                    
                 </div>
             </div>
+			<!-- Tweaks -->
+			<div style='clear: both'></div>
+			<hr>
+			<div style="opacity:0.80">
+				<h3 style='margin-bottom: 10px;'>Tweaks</h3>
+                <div>
+                    <label class="checkbox">
+                        <input id="keep_example_dialogue" type="checkbox"/><span></span><h4 style="display: inline-block;">Keep Example Dialogue</h4><h5>Keeps example dialogues from being removed</h5>
+                    </label>
+                </div>
+			</div>
         </div>
         <div id="rm_charater_import" class="right_menu" style="display: none;">
             <form id="form_import"  action="javascript:void(null);" method="post" enctype="multipart/form-data">
